@@ -1,54 +1,12 @@
 {
   "version": "7",
-  "dialect": "sqlite",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "6",
-      "when": 1792772594282,
-      "tag": "0000_melted_magik",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1793119648707,
-      "tag": "0001_empty_arachne",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1793130750265,
-      "tag": "0002_nervous_paibok",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1793134833169,
-      "tag": "0003_flashy_roland_deschain",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1793135834494,
-      "tag": "0004_volatile_pixie",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1793138426464,
-      "tag": "0005_familiar_spiral",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1793140115369,
-      "tag": "0006_simple_venom",
+      "version": "7",
+      "when": 1793142056095,
+      "tag": "0000_baseline",
       "breakpoints": true
     }
   ]

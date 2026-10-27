@@ -1,8 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import type { BatchItem } from 'drizzle-orm/batch';
 import { z } from 'zod';
 import { requireUser } from '@/lib/auth/session';
-import { getDb } from '@/db';
+import { first, getDb, type Db, type Tx } from '@/db';
 import { clients, documents, componentVersions, assets, sharedAssets, templateVersions } from '@/db/schema';
 import { sampleClient, sampleContent, newBlock, types } from '@/lib/email/model';
 const color = z.string().regex(/^#[a-f\d]{6}$/i);
@@ -10,8 +9,9 @@ const url = z.string().max(2048).refine(s => !s || /^https?:\/\/[^\s<>]+$/i.test
 const brandSchema = z.object({ name: z.string().min(1).max(120), logo: url, color, background: color, font: z.enum(['Arial, Helvetica, sans-serif', 'Georgia, Times New Roman, serif', 'Verdana, Geneva, sans-serif']), phone: z.string().max(80), website: url, address: z.string().max(500), footer: z.string().max(4000) });
 const blockSchema: z.ZodTypeAny = z.lazy(() => z.object({ id: z.string().min(1).max(80), type: z.enum(types), props: z.record(z.union([z.string().max(20000), z.number().finite().min(-1000).max(10000), z.boolean()])), children: z.array(blockSchema).max(100).optional(), source: z.object({ id: z.string().max(80), version: z.number().int().positive() }).optional() }));
 const contentSchema = z.object({ subject: z.string().max(200), preheader: z.string().max(500), width: z.number().int().min(320).max(900), background: color, blocks: z.array(blockSchema).max(100), design: z.object({ color, font: brandSchema.shape.font }).optional() });
-type Write = BatchItem<'sqlite'>;
-const batch = (db: ReturnType<typeof getDb>, writes: Write[]) => db.batch(writes as [Write, ...Write[]]);
+// A deferred write runs inside the shared transaction, so a failed import saves nothing.
+type Write = (tx: Tx) => PromiseLike<unknown>;
+const batch = (db: Db, writes: Write[]) => db.transaction(async (tx) => { for (const write of writes) await write(tx); });
 type TreeNode = { id: string; type: string; children?: TreeNode[] };
 const text = z.string().trim().min(1).max(120);
 const id = z.string().min(1).max(80);
@@ -39,11 +39,11 @@ async function allowed(req: Request, write = false) {
 }
 async function bootstrap() {
     const db = getDb();
-    if (await db.select({ id: clients.id }).from(clients).where(eq(clients.id, "toyota-meridian")).get())
+    if (await db.select({ id: clients.id }).from(clients).where(eq(clients.id, "toyota-meridian")).then(first))
         return;
     const client = sampleClient();
     const now = client.updatedAt;
-    await db.batch([db.insert(clients).values({ ...client, brand: JSON.stringify(client.brand) }).onConflictDoNothing(), db.insert(documents).values({ id: "toyota-october-sample", clientId: client.id, title: "October service specials", kind: "email", content: JSON.stringify(sampleContent()), revision: 1, updatedAt: now }).onConflictDoNothing(), db.insert(componentVersions).values({ id: "shared-two-columns", version: 1, clientId: null, name: "Two-column layout", content: JSON.stringify(newBlock("columns")), createdAt: now }).onConflictDoNothing()]);
+    await batch(db, [tx => tx.insert(clients).values({ ...client, brand: JSON.stringify(client.brand) }).onConflictDoNothing(), tx => tx.insert(documents).values({ id: "toyota-october-sample", clientId: client.id, title: "October service specials", kind: "email", content: JSON.stringify(sampleContent()), revision: 1, updatedAt: now }).onConflictDoNothing(), tx => tx.insert(componentVersions).values({ id: "shared-two-columns", version: 1, clientId: null, name: "Two-column layout", content: JSON.stringify(newBlock("columns")), createdAt: now }).onConflictDoNothing()]);
 }
 export async function GET(req: Request) {
     const denied = await allowed(req);
@@ -74,7 +74,7 @@ export async function POST(req: Request) {
         if (p.action === 'importDesigns') {
             const metadata = z.object({ description: z.string().max(500), campaign: text, industry: text, style: text, tags: z.array(z.string().min(1).max(40)).max(12) });
             const pack = z.object({ format: z.literal('mailcraft-design-pack-v1'), clientId: id, designs: z.array(z.object({ id, title: text, content: contentSchema, template: z.object({ id, name: text, metadata }).optional() })).min(1).max(10) }).parse(p.pack);
-            const client = await db.select().from(clients).where(eq(clients.id, pack.clientId)).get();
+            const client = await db.select().from(clients).where(eq(clients.id, pack.clientId)).then(first);
             if (!client) return json({ error: 'Open or create the client workspace before importing designs.' }, 404);
             const docIds = pack.designs.map(d => d.id);
             const templateIds = pack.designs.flatMap(d => d.template ? [d.template.id] : []);
@@ -83,17 +83,17 @@ export async function POST(req: Request) {
             let created = 0;
             for (const design of pack.designs) {
                 parseTree(design.content.blocks);
-                const existing = await db.select().from(documents).where(eq(documents.id, design.id)).get();
+                const existing = await db.select().from(documents).where(eq(documents.id, design.id)).then(first);
                 if (existing && (existing.clientId !== pack.clientId || existing.kind !== 'email')) return json({ error: 'A design ID belongs to another workspace or document type.' }, 409);
                 if (!existing) {
-                    writes.push(db.insert(documents).values({ id: design.id, clientId: pack.clientId, title: design.title, kind: 'email', content: JSON.stringify(design.content), revision: 1, updatedAt: now }));
+                    writes.push(tx => tx.insert(documents).values({ id: design.id, clientId: pack.clientId, title: design.title, kind: 'email', content: JSON.stringify(design.content), revision: 1, updatedAt: now }));
                     created++;
                 }
                 if (design.template) {
                     const t = design.template;
-                    const saved = await db.select().from(templateVersions).where(eq(templateVersions.id, t.id)).get();
+                    const saved = await db.select().from(templateVersions).where(eq(templateVersions.id, t.id)).then(first);
                     if (saved && saved.clientId !== pack.clientId) return json({ error: 'A template ID belongs to another library.' }, 409);
-                    if (!saved) writes.push(db.insert(templateVersions).values({ id: t.id, version: 1, clientId: pack.clientId, name: t.name, content: JSON.stringify(design.content), metadata: JSON.stringify(t.metadata), previewBrand: client.brand, createdAt: now }));
+                    if (!saved) writes.push(tx => tx.insert(templateVersions).values({ id: t.id, version: 1, clientId: pack.clientId, name: t.name, content: JSON.stringify(design.content), metadata: JSON.stringify(t.metadata), previewBrand: client.brand, createdAt: now }));
                 }
             }
             try {
@@ -114,11 +114,11 @@ export async function POST(req: Request) {
                     return json({ error: 'The client pack contains duplicate record IDs.' }, 400);
             if (pack.client.name !== pack.client.brand.name)
                 return json({ error: 'Client name and brand name must match.' }, 400);
-            const existing = await db.select().from(clients).where(eq(clients.id, pack.client.id)).get();
+            const existing = await db.select().from(clients).where(eq(clients.id, pack.client.id)).then(first);
             if (existing) {
                 if (existing.name.toLowerCase() !== pack.client.name.toLowerCase())
                     return json({ error: 'This client ID belongs to a different workspace.' }, 409);
-                const email = await db.select().from(documents).where(and(eq(documents.id, pack.email.id), eq(documents.clientId, existing.id))).get();
+                const email = await db.select().from(documents).where(and(eq(documents.id, pack.email.id), eq(documents.clientId, existing.id))).then(first);
                 return json({ clientId: existing.id, emailId: email?.id || null, existing: true });
             }
             const domain = (value: string) => { try {
@@ -132,13 +132,14 @@ export async function POST(req: Request) {
             if (allClients.some(c => c.name.toLowerCase() === pack.client.name.toLowerCase() || (newDomain && domain(JSON.parse(c.brand).website) === newDomain)))
                 return json({ error: 'A workspace for this client already exists. Open it instead of importing a duplicate.' }, 409);
             try {
-                const writes: Write[] = [db.insert(clients).values({ id: pack.client.id, name: pack.client.name, brand: JSON.stringify(pack.client.brand), revision: 1, updatedAt: now }), db.insert(documents).values({ id: pack.email.id, clientId: pack.client.id, title: pack.email.title, kind: 'email', content: JSON.stringify(pack.email.content), revision: 1, updatedAt: now })];
+                const writes: Write[] = [tx => tx.insert(clients).values({ id: pack.client.id, name: pack.client.name, brand: JSON.stringify(pack.client.brand), revision: 1, updatedAt: now }), tx => tx.insert(documents).values({ id: pack.email.id, clientId: pack.client.id, title: pack.email.title, kind: 'email', content: JSON.stringify(pack.email.content), revision: 1, updatedAt: now })];
                 for (const a of pack.assets)
-                    writes.push(db.insert(assets).values({ ...a, clientId: pack.client.id, createdAt: now }));
+                    writes.push(tx => tx.insert(assets).values({ ...a, clientId: pack.client.id, createdAt: now }));
                 for (const c of pack.components)
-                    writes.push(db.insert(componentVersions).values({ id: c.id, version: 1, clientId: pack.client.id, name: c.name, content: JSON.stringify(c.content), createdAt: now }));
-                if (pack.template)
-                    writes.push(db.insert(templateVersions).values({ id: pack.template.id, version: 1, clientId: pack.client.id, name: pack.template.name, content: JSON.stringify(pack.email.content), metadata: JSON.stringify(pack.template.metadata), previewBrand: JSON.stringify(pack.client.brand), createdAt: now }));
+                    writes.push(tx => tx.insert(componentVersions).values({ id: c.id, version: 1, clientId: pack.client.id, name: c.name, content: JSON.stringify(c.content), createdAt: now }));
+                const packTemplate = pack.template;
+                if (packTemplate)
+                    writes.push(tx => tx.insert(templateVersions).values({ id: packTemplate.id, version: 1, clientId: pack.client.id, name: packTemplate.name, content: JSON.stringify(pack.email.content), metadata: JSON.stringify(packTemplate.metadata), previewBrand: JSON.stringify(pack.client.brand), createdAt: now }));
                 await batch(db, writes);
                 return json({ clientId: pack.client.id, emailId: pack.email.id, existing: false }, 201);
             }
@@ -161,7 +162,7 @@ export async function POST(req: Request) {
         if (p.action === 'document') {
             const input = z.object({ id, clientId: id, title: text, kind: z.enum(['email', 'template']), content: contentSchema, revision: z.number().int().nonnegative() }).parse(p);
             parseTree(input.content.blocks);
-            if (!(await db.select().from(clients).where(eq(clients.id, input.clientId)).get()))
+            if (!(await db.select().from(clients).where(eq(clients.id, input.clientId)).then(first)))
                 return json({ error: 'Client not found.' }, 404);
             if (input.revision === 0) {
                 const [row] = await db.insert(documents).values({ ...input, content: JSON.stringify(input.content), revision: 1, updatedAt: now }).returning();
@@ -176,9 +177,9 @@ export async function POST(req: Request) {
             const metadataSchema = z.object({ description: z.string().max(500), campaign: z.string().trim().min(1).max(60), industry: z.string().trim().min(1).max(60), style: z.string().trim().min(1).max(60), tags: z.array(z.string().trim().min(1).max(40)).max(12) });
             const input = z.object({ id, clientId: id.nullable(), name: text, content: contentSchema, metadata: metadataSchema, previewBrand: brandSchema, baseVersion: z.number().int().nonnegative() }).parse(p);
             parseTree(input.content.blocks);
-            if (input.clientId && !(await db.select().from(clients).where(eq(clients.id, input.clientId)).get()))
+            if (input.clientId && !(await db.select().from(clients).where(eq(clients.id, input.clientId)).then(first)))
                 return json({ error: 'Client not found.' }, 404);
-            const latest = await db.select().from(templateVersions).where(eq(templateVersions.id, input.id)).orderBy(desc(templateVersions.version)).get();
+            const latest = await db.select().from(templateVersions).where(eq(templateVersions.id, input.id)).orderBy(desc(templateVersions.version)).then(first);
             if ((latest?.version || 0) !== input.baseVersion || latest && latest.clientId !== input.clientId)
                 return json({ error: 'This template has a newer version or a different library. Reload before publishing.' }, 409);
             try {
@@ -192,9 +193,9 @@ export async function POST(req: Request) {
         if (p.action === 'component') {
             const input = z.object({ id, clientId: id.nullable(), name: text, content: blockSchema, baseVersion: z.number().int().nonnegative() }).parse(p);
             parseTree(input.content);
-            if (input.clientId && !(await db.select().from(clients).where(eq(clients.id, input.clientId)).get()))
+            if (input.clientId && !(await db.select().from(clients).where(eq(clients.id, input.clientId)).then(first)))
                 return json({ error: 'Client not found.' }, 404);
-            const latest = await db.select().from(componentVersions).where(eq(componentVersions.id, input.id)).orderBy(desc(componentVersions.version)).get();
+            const latest = await db.select().from(componentVersions).where(eq(componentVersions.id, input.id)).orderBy(desc(componentVersions.version)).then(first);
             if ((latest?.version || 0) !== input.baseVersion || latest && latest.clientId !== input.clientId)
                 return json({ error: 'This component has a newer version. Reload before publishing another version.' }, 409);
             try {
@@ -207,7 +208,7 @@ export async function POST(req: Request) {
         }
         if (p.action === 'asset') {
             const input = z.object({ clientId: id.nullable(), name: text, url: url.refine(s => s.length > 0) }).parse(p);
-            if (input.clientId && !(await db.select().from(clients).where(eq(clients.id, input.clientId)).get()))
+            if (input.clientId && !(await db.select().from(clients).where(eq(clients.id, input.clientId)).then(first)))
                 return json({ error: 'Client not found.' }, 404);
             if(input.clientId===null){
                 const [row]=await db.insert(sharedAssets).values({id:crypto.randomUUID(),name:input.name,url:input.url,createdAt:now}).returning();

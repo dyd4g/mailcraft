@@ -47,3 +47,9 @@ yarn-error.log*
 # Local shell logs
 *.log
 
+
+# local development database
+/.data/
+
+# generated deployment secrets
+/infra/azure/.secrets/

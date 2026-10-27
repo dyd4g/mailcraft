@@ -1,7 +1,8 @@
 import {and,eq,lt,ne} from 'drizzle-orm';
-import {getDb} from '@/db';
+import {first,getDb} from '@/db';
 import {sessions,users} from '@/db/auth-schema';
 import {tokenHash,newToken} from './token';
+import {publicOrigin} from './origin';
 export const SESSION_COOKIE='mc_session';
 const ABSOLUTE_MS=7*86400000,IDLE_MS=12*3600000,TOUCH_MS=5*60000;
 export type SessionUser={id:string;email:string;name:string;role:'admin'|'member';mustChangePassword:boolean};
@@ -10,10 +11,10 @@ export const normalizeAccountEmail=(v:string)=>v.trim().toLowerCase();
 function cookieValue(req:Request,name:string){
  for(const part of (req.headers.get('cookie')||'').split(';')){const i=part.indexOf('=');if(i>0&&part.slice(0,i).trim()===name)return part.slice(i+1).trim();}return '';
 }
-const secure=(req:Request)=>new URL(req.url).protocol==='https:'||req.headers.get('x-forwarded-proto')==='https';
+const secure=(req:Request)=>publicOrigin(req).startsWith('https:');
 export const sessionCookie=(req:Request,token:string)=>`${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${ABSOLUTE_MS/1000}${secure(req)?'; Secure':''}`;
 export const clearedCookie=(req:Request)=>`${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure(req)?'; Secure':''}`;
-export function sameOrigin(req:Request){const origin=req.headers.get('origin');return !origin||origin===new URL(req.url).origin;}
+export function sameOrigin(req:Request){const origin=req.headers.get('origin');return !origin||origin===publicOrigin(req);}
 export async function startSession(userId:string){
  const db=getDb(),now=new Date(),token=newToken();
  await db.delete(sessions).where(lt(sessions.expiresAt,now.toISOString()));
@@ -29,7 +30,7 @@ export async function endOtherSessions(req:Request,userId:string){
 export async function getSessionUser(req:Request):Promise<SessionUser|null>{
  const token=cookieValue(req,SESSION_COOKIE);if(!/^[a-f0-9]{64}$/.test(token))return null;
  const db=getDb(),hash=await tokenHash(token),now=Date.now();
- const row=await db.select({session:sessions,user:users}).from(sessions).innerJoin(users,eq(users.id,sessions.userId)).where(eq(sessions.hash,hash)).get();
+ const row=await db.select({session:sessions,user:users}).from(sessions).innerJoin(users,eq(users.id,sessions.userId)).where(eq(sessions.hash,hash)).then(first);
  if(!row)return null;
  if(new Date(row.session.expiresAt).getTime()<=now||now-new Date(row.session.lastSeenAt).getTime()>IDLE_MS){await db.delete(sessions).where(eq(sessions.hash,hash));return null;}
  if(!row.user.active)return null;

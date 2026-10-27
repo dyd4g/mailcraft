@@ -1,0 +1,29 @@
+# Runs the whole stack on one machine: `docker compose up --build`, then open http://localhost:3000
+# First sign-in: use the setup token below to create the first administrator, then remove it.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mailcraft
+      POSTGRES_PASSWORD: mailcraft
+      POSTGRES_DB: mailcraft
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailcraft -d mailcraft"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://mailcraft:mailcraft@db:5432/mailcraft
+      PUBLIC_BASE_URL: http://localhost:3000
+      SETUP_TOKEN: change-this-local-setup-token
+    ports:
+      - "3000:3000"
+volumes:
+  dbdata:

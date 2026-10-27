@@ -1,7 +1,6 @@
-import {env} from 'cloudflare:workers';
 import {eq,sql} from 'drizzle-orm';
 import {z} from 'zod';
-import {getDb} from '@/db';
+import {first,getDb} from '@/db';
 import {users} from '@/db/auth-schema';
 import {equalConstantTime,hashPassword,needsRehash,validatePassword,verifyPassword} from '@/lib/auth/password';
 import {clearedCookie,endOtherSessions,endSession,getSessionUser,json,normalizeAccountEmail,requireUser,sameOrigin,sessionCookie,startSession} from '@/lib/auth/session';
@@ -14,8 +13,8 @@ const publicUser=(u:{id:string;email:string;name:string;role:string;mustChangePa
 export async function GET(req:Request){
  try{
   const user=await getSessionUser(req);
-  const count=await getDb().select({n:sql<number>`count(*)`}).from(users).get();
-  return json({user,setupAvailable:(count?.n||0)===0&&!!env.SETUP_TOKEN?.trim()});
+  const count=await getDb().select({n:sql<number>`count(*)::int`}).from(users).then(first);
+  return json({user,setupAvailable:(count?.n||0)===0&&!!process.env.SETUP_TOKEN?.trim()});
  }catch{return json({error:'Sign-in is unavailable. Try again shortly.'},503);}
 }
 export async function POST(req:Request){
@@ -24,7 +23,7 @@ export async function POST(req:Request){
   const p=await req.json() as {action?:string};const db=getDb(),now=new Date().toISOString();
   if(p.action==='login'){
    const input=z.object({email,password:z.string().min(1).max(200)}).safeParse(p);if(!input.success)return json({error:'Incorrect email or password.'},401);
-   const account=await db.select().from(users).where(eq(users.email,input.data.email)).get();
+   const account=await db.select().from(users).where(eq(users.email,input.data.email)).then(first);
    if(account?.lockedUntil&&new Date(account.lockedUntil).getTime()>Date.now())return json({error:'Too many failed attempts. Try again in 15 minutes, or ask an administrator to reset your password.'},429);
    const ok=await verifyPassword(input.data.password,account?.passwordHash||DUMMY_HASH);
    if(!account||!ok||!account.active){
@@ -38,7 +37,7 @@ export async function POST(req:Request){
   if(p.action==='changePassword'){
    const auth=await requireUser(req,{write:true,allowPasswordChange:true});if(auth.denied)return auth.denied;
    const input=z.object({currentPassword:z.string().min(1).max(200),newPassword:z.string().max(200)}).safeParse(p);if(!input.success)return json({error:'Enter your current and new password.'},400);
-   const account=await db.select().from(users).where(eq(users.id,auth.user.id)).get();
+   const account=await db.select().from(users).where(eq(users.id,auth.user.id)).then(first);
    if(!account||!await verifyPassword(input.data.currentPassword,account.passwordHash))return json({error:'Your current password is incorrect.'},400);
    const problem=validatePassword(input.data.newPassword,account.email);if(problem)return json({error:problem},400);
    if(input.data.newPassword===input.data.currentPassword)return json({error:'Choose a password different from the current one.'},400);
@@ -46,7 +45,7 @@ export async function POST(req:Request){
    await endOtherSessions(req,account.id);return json({ok:true});
   }
   if(p.action==='setup'){
-   const secret=env.SETUP_TOKEN?.trim();const count=await db.select({n:sql<number>`count(*)`}).from(users).get();
+   const secret=process.env.SETUP_TOKEN?.trim();const count=await db.select({n:sql<number>`count(*)::int`}).from(users).then(first);
    if(!secret||(count?.n||0)>0)return json({error:'First-time setup is not available.'},409);
    const input=z.object({token:z.string().max(500),email,name:z.string().trim().min(1).max(120),password:z.string().max(200)}).safeParse(p);if(!input.success)return json({error:'Enter the setup token, your name, a valid email and a password.'},400);
    if(!equalConstantTime(input.data.token,secret))return json({error:'The setup token is not correct.'},403);

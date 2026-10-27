@@ -1,2 +1,0 @@
-CREATE UNIQUE INDEX `audience_import_identity` ON `audience_imports` (`client_id`,`fingerprint`,`kind`);--> statement-breakpoint
-CREATE UNIQUE INDEX `campaign_report_identity` ON `campaign_reports` (`campaign_id`,`fingerprint`);

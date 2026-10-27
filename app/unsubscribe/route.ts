@@ -1,12 +1,12 @@
 import {and,eq} from 'drizzle-orm';
-import {getDb} from '@/db';
+import {first,getDb} from '@/db';
 import {clients} from '@/db/schema';
 import {contacts,preferenceTokens} from '@/db/campaign-schema';
 import {tokenHash} from '@/lib/campaigns/server';
 import {escapeHtml} from '@/lib/email/render';
 async function render(req:Request,submit:boolean){
- const token=new URL(req.url).searchParams.get('t')||'';const db=getDb();const preference=/^[a-f0-9]{64}$/.test(token)?await db.select().from(preferenceTokens).where(eq(preferenceTokens.hash,await tokenHash(token))).get():null;
- const client=preference?await db.select().from(clients).where(eq(clients.id,preference.clientId)).get():null;
+ const token=new URL(req.url).searchParams.get('t')||'';const db=getDb();const preference=/^[a-f0-9]{64}$/.test(token)?await db.select().from(preferenceTokens).where(eq(preferenceTokens.hash,await tokenHash(token))).then(first):null;
+ const client=preference?await db.select().from(clients).where(eq(clients.id,preference.clientId)).then(first):null;
  let title='This preference link is unavailable.',body='Please use the unsubscribe link in your original email.',form='';
  if(preference&&client){
   if(submit){await db.update(contacts).set({status:'unsubscribed',updatedAt:new Date().toISOString()}).where(and(eq(contacts.clientId,preference.clientId),eq(contacts.email,preference.email)));title='You’re unsubscribed.';body=`You will no longer receive marketing emails from ${client.name}. This does not change subscriptions with other businesses.`;}

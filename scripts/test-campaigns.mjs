@@ -13,12 +13,16 @@ const base='http://127.0.0.1:5173';let cookie='';
 async function req(payload,clientId){const res=await fetch(base+'/api/campaigns'+(payload?'':'?clientId='+clientId),{method:payload?'POST':'GET',headers:{Cookie:cookie,...(payload?{'Content-Type':'application/json',Origin:base}:{})},body:payload?JSON.stringify(payload):undefined});return {status:res.status,data:await res.json()};}
 assert.equal((await req(null,'toyota-meridian')).status,401);
 cookie=await signIn(base);
+// A second client, created here so the isolation checks do not depend on which sample clients exist.
+const studioGet=await (await fetch(base+'/api/studio',{headers:{Cookie:cookie}})).json();
+const other={id:'qa-other-'+crypto.randomUUID().slice(0,8),name:'QA other client',brand:{...studioGet.clients[0].brand,name:'QA other client',website:'https://other.example.com'},revision:0};
+assert.equal((await fetch(base+'/api/studio',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json',Origin:base},body:JSON.stringify({action:'client',...other})})).status,201);
 const clientId='toyota-meridian',id=crypto.randomUUID(),email='campaign-qa-'+id+'@example.com';
 const pack={action:'importContacts',clientId,id:crypto.randomUUID(),name:'QA mapped list',fingerprint:('a'+id.replaceAll('-','')).padEnd(64,'1'),mapping:{email:'Email',firstName:'First',lastName:'Last',extra:[]},kind:'audience',stats:{rows:1,valid:1,invalid:0,duplicates:0,unique:1},contacts:[{email,firstName:'Original',lastName:'Person',fields:{}}]};
 assert.equal((await req(pack)).status,201);assert.equal((await req(pack)).data.existing,true);
 assert.equal((await req({...pack,id:crypto.randomUUID(),fingerprint:'b'.repeat(64),contacts:[{...pack.contacts[0],fields:{VIN:'not mapped'}}]})).status,400);
 const create=await req({action:'create',clientId,id,name:'QA campaign',documentId:'toyota-october-sample'});assert.equal(create.status,201);
-assert.equal((await req({action:'create',clientId:'hyundai-meridian',id:crypto.randomUUID(),name:'Cross client source',documentId:'toyota-october-sample'})).status,400);
+assert.equal((await req({action:'create',clientId:other.id,id:crypto.randomUUID(),name:'Cross client source',documentId:'toyota-october-sample'})).status,400);
 let data=(await req(null,clientId)).data;let campaign=data.campaigns.find(c=>c.id===id);assert.ok(campaign.snapshot.html.includes('Toyota'));const snapshot=JSON.stringify(campaign.snapshot);
 assert.equal((await req({action:'update',clientId,campaignId:id,name:campaign.name,revision:campaign.revision,audienceId:pack.id,plannedAt:null,sentAt:null,status:'ready'})).status,200);
 assert.equal((await req({action:'update',clientId,campaignId:id,name:'Conflict',revision:campaign.revision,audienceId:pack.id,plannedAt:null,sentAt:null,status:'draft'})).status,409);
@@ -34,7 +38,7 @@ assert.equal((await req({...pack,id:crypto.randomUUID(),fingerprint:('c'+id.repl
 data=(await req(null,clientId)).data;const contact=data.contacts.find(c=>c.email===email);assert.equal(contact.status,'unsubscribed');assert.equal(contact.firstName,'Original');assert.equal(JSON.stringify(data.campaigns.find(c=>c.id===id).snapshot),snapshot);assert.ok(data.events.some(e=>e.campaignId===id&&e.isTest===1));
 const report={action:'importReport',clientId,campaignId:id,id:crypto.randomUUID(),fingerprint:('d'+id.replaceAll('-','')).padEnd(64,'1'),source:'QA raw export.xlsx',cutoff:new Date().toISOString(),timezone:'Unknown (source export)',data:{stats:{sent:1,delivered:1,clicked:1},events:[{email,event:'click',url:'https://example.com',timestamp:'2026-10-14 14:00:00',raw:{ProviderExtra:'retained'}}],notes:[],rawSheets:[{name:'Unknown source',rows:[['Unusual column','Value'],['kept',42]]}]}};
 assert.equal((await req(report)).status,201);assert.equal((await req(report)).data.existing,true);
-assert.equal((await req({...report,clientId:'hyundai-meridian',id:crypto.randomUUID()})).status,404);
+assert.equal((await req({...report,clientId:other.id,id:crypto.randomUUID()})).status,404);
 data=(await req(null,clientId)).data;const saved=data.reports.find(r=>r.id===report.id);assert.equal(saved.data.rawSheets[0].rows[1][1],42);assert.equal(saved.data.events[0].raw.ProviderExtra,'retained');
 assert.equal((await fetch(base+'/unsubscribe?t=bad')).status,404);assert.equal((await fetch(base+'/r/bad')).status,404);
 console.log('PASS: campaign auth, ownership, import idempotence, unmapped-field rejection, immutable snapshots, revision conflicts, disabled sends, test click tracking, client unsubscribe, GET safety, reimport suppression, raw source preservation and report isolation.');
