@@ -13,10 +13,10 @@ const link = (slug) => `${SITE}?utm_source=newsletter&utm_medium=email&utm_campa
 // Coupons in the dealership's requested order. Add the remaining ones (Sunbit financing, GOOD and Brake & Rotor) in their
 // slots when the artwork arrives: row 2 left/right and row 3 left.
 export const coupons = [
-  { slug: 'full-synthetic-oil-change', file: '9b43fd52-7feb-4e3c-a372-ccc4a6c52763.png', alt: 'Full Synthetic Oil Change: $69.99, up to 5 quarts. Protect your engine. Power every mile.' },
-  { slug: 'better-bundle', file: '32aca23a-4bda-481c-b320-5c4c8a077e99.png', alt: 'BETTER Bundle: oil and filter change, tire rotation, cabin filter or air filter, and fuel treatment, $169.99. Hyundai vehicles only.' },
-  { slug: 'alignment', file: '0fcd801e-03e0-45f5-9cde-5308d77529db.png', alt: 'Alignment: $20 off. Straighten your drive. Extend your tire life.' },
-  { slug: 'best-bundle', file: 'fbdbf3c1-2161-4046-b789-ead0be0f6c08.png', alt: 'BEST Bundle: oil and filter change, tire rotation, cabin filter, air filter, fuel treatment and oil additive, $225.99. Hyundai vehicles only.' },
+  { slug: 'full-synthetic-oil-change', file: 'coupon-full-synthetic-oil-change.png', alt: 'Full Synthetic Oil Change: $69.99, up to 5 quarts. Protect your engine. Power every mile.' },
+  { slug: 'better-bundle', file: 'coupon-better-bundle.png', alt: 'BETTER Bundle: oil and filter change, tire rotation, cabin filter or air filter, and fuel treatment, $169.99. Hyundai vehicles only.' },
+  { slug: 'alignment', file: 'coupon-alignment.png', alt: 'Alignment: $20 off. Straighten your drive. Extend your tire life.' },
+  { slug: 'best-bundle', file: 'coupon-best-bundle.png', alt: 'BEST Bundle: oil and filter change, tire rotation, cabin filter, air filter, fuel treatment and oil additive, $225.99. Hyundai vehicles only.' },
 ];
 
 let n = 100;
@@ -24,7 +24,7 @@ const id = () => `hyundai-grid-${n++}`;
 const text = (t, o = {}) => ({ id: id(), type: 'text', props: { text: t, fontSize: 16, color: '#43536b', background: '#ffffff', padding: 26, align: 'left', ...o } });
 const cell = (c) => ({
   id: id(), type: 'image',
-  props: { src: UPLOADS + c.file, alt: c.alt, link: link(c.slug), padding: 0, background: '#ffffff' },
+  props: { src: ASSETS + c.file, alt: c.alt, link: link(c.slug), padding: 0, background: '#ffffff' },
 });
 const row = (pair) => ({
   id: id(), type: 'columns',
@@ -36,7 +36,7 @@ const rows = [];
 for (let i = 0; i < coupons.length; i += 2) rows.push(row(coupons.slice(i, i + 2)));
 
 export const couponGridEmail = {
-  id: 'hyundai-meridian-service-coupons',
+  id: 'hyundai-meridian-service-coupons-2', // -2: the first version hotlinked images the host blocks; imports never overwrite, so this is a new ID
   title: 'Hyundai of Meridian — Service Coupons',
   content: {
     subject: 'Hyundai service coupons: oil change $69.99, alignment $20 off',
@@ -73,7 +73,7 @@ if (import.meta.url === new URL(process.argv[1], 'file:///').href || process.arg
   const designPack = JSON.parse(JSON.stringify(hyundaiDesignPack).replaceAll(old, ASSETS.replace('clients/hyundai-of-meridian/', '')));
   designPack.designs.push({
     id: couponGridEmail.id, title: couponGridEmail.title, content: couponGridEmail.content,
-    template: { id: 'hyundai-meridian-service-coupons-template', name: couponGridEmail.title, metadata: { description: 'Fall service coupons in rows of two linked coupon images under a seasonal banner.', campaign: 'Promotion', industry: 'Automotive', style: 'Image-led', tags: ['Hyundai', 'service', 'coupons', 'fall'] } },
+    template: { id: 'hyundai-meridian-service-coupons-2-template', name: couponGridEmail.title, metadata: { description: 'Fall service coupons in rows of two linked coupon images under a seasonal banner.', campaign: 'Promotion', industry: 'Automotive', style: 'Image-led', tags: ['Hyundai', 'service', 'coupons', 'fall'] } },
   });
   writeFileSync(new URL('outputs/hyundai-design-pack.azure.json', root), JSON.stringify(designPack, null, 2));
   console.log('wrote design pack with', designPack.designs.length, 'designs');
