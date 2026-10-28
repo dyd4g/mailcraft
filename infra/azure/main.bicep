@@ -37,7 +37,7 @@ var serverName = toLower('${baseName}-pg-${suffix}')
 var appName = '${baseName}-app'
 var pgAdmin = 'mailcraftadmin'
 var databaseName = 'mailcraft'
-var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d0f71'
+var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: '${baseName}-logs'

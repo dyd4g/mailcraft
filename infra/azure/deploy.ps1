@@ -16,7 +16,8 @@ param(
   [Parameter(Mandatory)] [string] $Location,
   [string] $BaseName = 'mailcraft',
   [string] $PublicBaseUrl = '',
-  [string] $ImageTag = (Get-Date -Format 'yyyyMMddHHmmss')
+  [string] $ImageTag = (Get-Date -Format 'yyyyMMddHHmmss'),
+  [switch] $SkipBuild
 )
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -29,8 +30,18 @@ function Invoke-Az {
   return $output
 }
 function New-RandomSecret([int] $length) {
+  # Works in Windows PowerShell 5.1 (no RandomNumberGenerator.GetInt32); bytes above the largest multiple of 56 are skipped to avoid bias.
   $chars = [char[]]'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  -join (1..$length | ForEach-Object { $chars[[Security.Cryptography.RandomNumberGenerator]::GetInt32($chars.Length)] })
+  $limit = 256 - (256 % $chars.Length)
+  $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+  $bytes = New-Object byte[] 1
+  $out = New-Object System.Text.StringBuilder
+  while ($out.Length -lt $length) {
+    $rng.GetBytes($bytes)
+    if ($bytes[0] -lt $limit) { [void]$out.Append($chars[$bytes[0] % $chars.Length]) }
+  }
+  $rng.Dispose()
+  return $out.ToString()
 }
 
 $account = Invoke-Az account show --query '{name:name,id:id,user:user.name}' -o json | ConvertFrom-Json
@@ -53,8 +64,15 @@ $common = @('--resource-group', $ResourceGroup, '--template-file', (Join-Path $P
 Write-Host '1/3 Creating registry, database and environment...'
 $first = Invoke-Az deployment group create @common 'deployApp=false' --query properties.outputs -o json | ConvertFrom-Json
 
-Write-Host "2/3 Building the image in the registry ($($first.registryName.value))..."
-Invoke-Az acr build --registry $first.registryName.value --image "mailcraft:$ImageTag" --file (Join-Path $root 'Dockerfile') $root
+# The build log contains non-ASCII characters; Windows consoles would otherwise crash the az log streamer.
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+if ($SkipBuild) {
+  Write-Host "2/3 Skipping the build; using the image mailcraft:$ImageTag already in the registry."
+} else {
+  Write-Host "2/3 Building the image in the registry ($($first.registryName.value))..."
+  Invoke-Az acr build --registry $first.registryName.value --image "mailcraft:$ImageTag" --file (Join-Path $root 'Dockerfile') $root
+}
 
 Write-Host '3/3 Creating the container app...'
 $final = Invoke-Az deployment group create @common 'deployApp=true' --query properties.outputs -o json | ConvertFrom-Json

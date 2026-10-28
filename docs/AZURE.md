@@ -1,8 +1,16 @@
 # Hosting Mailcraft Studio on Azure
 
-Status: the application, the PostgreSQL port and the container start-up were tested locally (real PostgreSQL, plain Node,
-production build). The Docker image and the Azure template in `infra/azure/` have **not been run yet**; expect to fix small
-things on the first deployment.
+Status: deployed once to Azure Container Apps in Central US (DYD Azure - Dev); the image built in the registry, migrations ran and
+`/api/health` passed.
+
+Lessons from that first run:
+- Your subscription may not allow PostgreSQL Flexible Server in every region. East US was restricted and East US 2 refused the
+  B1ms size; Central US worked. Try another `-Location` if you see `ParameterOutOfRange` or `SkuNotAvailable`.
+- Register the providers once per subscription: `az provider register -n Microsoft.App --wait` and
+  `az provider register -n Microsoft.DBforPostgreSQL --wait`.
+- On a PC where scripts are blocked, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in that window first.
+- If the build step fails only on log display, the build may still have succeeded; rerun with
+  `-ImageTag <tag from the failed run> -SkipBuild`.
 
 ## What gets created
 
