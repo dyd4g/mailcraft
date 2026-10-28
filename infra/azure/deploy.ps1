@@ -64,14 +64,19 @@ $common = @('--resource-group', $ResourceGroup, '--template-file', (Join-Path $P
 Write-Host '1/3 Creating registry, database and environment...'
 $first = Invoke-Az deployment group create @common 'deployApp=false' --query properties.outputs -o json | ConvertFrom-Json
 
-# The build log contains non-ASCII characters; Windows consoles would otherwise crash the az log streamer.
-$env:PYTHONUTF8 = '1'
-$env:PYTHONIOENCODING = 'utf-8'
 if ($SkipBuild) {
   Write-Host "2/3 Skipping the build; using the image mailcraft:$ImageTag already in the registry."
 } else {
-  Write-Host "2/3 Building the image in the registry ($($first.registryName.value))..."
-  Invoke-Az acr build --registry $first.registryName.value --image "mailcraft:$ImageTag" --file (Join-Path $root 'Dockerfile') $root
+  Write-Host "2/3 Building the image in the registry ($($first.registryName.value)); this takes a few minutes..."
+  # The az log streamer crashes on Windows consoles (cp1252 cannot print the check marks in the build log), so queue the
+  # build without streaming and poll its status instead.
+  $runId = Invoke-Az acr build --registry $first.registryName.value --image "mailcraft:$ImageTag" --file (Join-Path $root 'Dockerfile') --no-logs --query runId -o tsv $root
+  do {
+    Start-Sleep 15
+    $status = Invoke-Az acr task show-run --registry $first.registryName.value --run-id $runId --query status -o tsv
+    Write-Host "   build $runId : $status"
+  } while ($status -in 'Queued', 'Started', 'Running')
+  if ($status -ne 'Succeeded') { throw "Image build $runId ended with status $status. See: az acr task logs --registry $($first.registryName.value) --run-id $runId" }
 }
 
 Write-Host '3/3 Creating the container app...'
